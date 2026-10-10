@@ -10,7 +10,7 @@
 /.clang-tidy
 **/.test
 /.appanalyzer
-/signing-config.json5
+/build-profile.json5
 /.preview/
 *.log
 .DS_Store

@@ -1,0 +1,50 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "material": {
+          "storePassword": "00000020F15D06451A6DF92993D1BDB2E9FC0C2C7780BBCD8DEE8A05B553334B591E91E025906C7F2C4881861A260F8F",
+          "certpath": "/storage/Users/currentUser/Documents/ohos/config/default_WebDAVSyncraOxAOJvrNEPan5NKCs4cgcdTOGYvk83wlr4OXRqrW4.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "00000020F15D06451A6DF92993D1BDB2E9FC0C2C7780BBCD8DEE8A05B553334B591E91E025906C7F2C4881861A260F8F",
+          "profile": "/storage/Users/currentUser/Documents/ohos/config/default_WebDAVSyncraOxAOJvrNEPan5NKCs4cgcdTOGYvk83wlr4OXRqrW4.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "/storage/Users/currentUser/Documents/ohos/config/default_WebDAVSyncraOxAOJvrNEPan5NKCs4cgcdTOGYvk83wlr4OXRqrW4.p12"
+        },
+        "type": "HarmonyOS"
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "compileSdkVersion": "6.1.0(23)",
+        "compatibleSdkVersion": "6.1.0(23)",
+        "runtimeOS": "HarmonyOS"
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

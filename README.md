@@ -91,9 +91,11 @@ entry/src/main/ets/
 
 ## 构建与运行
 
-1. 使用 DevEco Studio 5.0+ 打开项目根目录
-2. 等待 hvigor 同步完成、依赖下载
-3. 选择目标设备（手机/平板/2in1），点击 Run 即可
+1. 复制签名模板：`cp build-profile.json5.template build-profile.json5`
+2. 将 `build-profile.json5` 中的占位值替换为实际的签名证书路径和密码（该文件已在 `.gitignore` 中，不会被提交）
+3. 使用 DevEco Studio 5.0+ 打开项目根目录
+4. 等待 hvigor 同步完成、依赖下载
+5. 选择目标设备（手机/平板/2in1），点击 Run 即可
 
 ## 权限
 

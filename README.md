@@ -136,5 +136,4 @@ entry/src/main/ets/
 
 - 编译 SDK / 最低版本：6.1.0(23)，即 API 23；运行环境 HarmonyOS NEXT；设备类型 phone / tablet / 2in1
 - 托盘、`hideAbility`/`showAbility`（PC/2in1 13+）、`TASK_KEEPING`（PC/2in1 API 20/21 起对三方开放）只在桌面形态可用
-- 本 SDK 中不存在或无效的东西，不要指望它们：`statusBarManager.isStatusBarCapabilitySupported`（API 26）、`backgroundTaskManager.on('continuousTaskCancel')`、`Window.setWindowCloseInterceptor`、module.json5 的 `excludeFromDock`（官方标注「该标签配置不生效」）
-- `menuCode` 需要 API 24+，右键菜单项只能按 `title` 识别；系统自带且无法抑制的「退出」项会出现在托盘右键菜单里
+

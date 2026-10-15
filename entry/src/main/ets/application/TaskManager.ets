@@ -52,8 +52,8 @@ export class TaskManager implements ITaskManager {
       t.direction = r.direction !== undefined ? r.direction : SyncDirection.Bidirectional;
       t.conflictStrategy = r.conflictStrategy !== undefined ? r.conflictStrategy : ConflictStrategy.CreateCopy;
       t.watchEnabled = r.watchEnabled !== undefined ? r.watchEnabled : true;
-      t.debounceMs = r.debounceMs !== undefined ? r.debounceMs : 1000;
-      t.pollIntervalSec = r.pollIntervalSec !== undefined ? r.pollIntervalSec : 60;
+      t.debounceMs = r.debounceMs !== undefined ? r.debounceMs : 500;
+      t.pollIntervalSec = r.pollIntervalSec !== undefined ? r.pollIntervalSec : 30;
       t.filterRules = r.filterRules !== undefined ? r.filterRules : '';
       t.concurrency = r.concurrency !== undefined ? r.concurrency : 2;
       result.push(t);

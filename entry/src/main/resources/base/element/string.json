@@ -7,6 +7,10 @@
     {
       "name": "entryability_desc",
       "value": "WebDAV 同步工具"
+    },
+    {
+      "name": "background_running_reason",
+      "value": "用于在后台持续监控文件变化并执行同步任务"
     }
   ]
 }

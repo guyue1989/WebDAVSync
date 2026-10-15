@@ -6,6 +6,7 @@
     "pages/FileBrowserPage",
     "pages/SyncSettingsPage",
     "pages/SyncStatusPage",
-    "pages/LocalDirPickerPage"
+    "pages/LocalDirPickerPage",
+    "pages/TrayPanelPage"
   ]
 }

@@ -4,6 +4,7 @@ import picker from '@ohos.file.picker';
 
 import { ServiceContainer } from '../application/ServiceContainer';
 import { AppContext } from '../application/AppContext';
+import { SettingsStore } from '../application/SettingsStore';
 import { FileEntry } from '../domain/FileEntry';
 import { Connection } from '../domain/Connection';
 import { Theme } from '../application/Theme';
@@ -16,12 +17,16 @@ struct FileBrowserPage {
   @State newDirName: string = '';
   @State isSelectMode: boolean = false;
   @StorageProp('themeMode') themeMode: string = 'light';
+  @StorageProp('systemDark') systemDark: boolean = false;
   private conn: Connection | null = null;
   private lastEnterTime: number = 0;
 
   private isDark(): boolean {
-    return this.themeMode === 'dark';
+    return this.themeMode === 'dark' || (this.themeMode === 'system' && this.systemDark);
   }
+
+  @State private hovBtn: string = '';
+  @State private hovRow: string = '';
 
   async aboutToAppear(): Promise<void> {
     await ServiceContainer.init();
@@ -73,6 +78,7 @@ struct FileBrowserPage {
 
   selectRemoteDir(): void {
     AppStorage.setOrCreate('selectedRemoteDir', this.currentPath);
+    SettingsStore.put('selectedRemoteDir', this.currentPath);
     router.back();
   }
 
@@ -147,10 +153,16 @@ struct FileBrowserPage {
   build() {
     Column() {
       Row() {
-        Button('‹ 主页').fontSize(14).onClick(() => { router.back(); })
-        Button('上级').fontSize(14).margin({ left: 8 }).onClick(() => { this.goUp(); })
+        Button('‹ 主页').fontSize(14).opacity(this.hovBtn === 'back' ? 0.85 : 1)
+          .onHover((h: boolean) => { this.hovBtn = h ? 'back' : ''; })
+          .onClick(() => { router.back(); })
+        Button('上级').fontSize(14).margin({ left: 8 }).opacity(this.hovBtn === 'up' ? 0.85 : 1)
+          .onHover((h: boolean) => { this.hovBtn = h ? 'up' : ''; })
+          .onClick(() => { this.goUp(); })
         Text(this.currentPath).fontSize(13).fontColor(Theme.sub(this.isDark())).margin({ left: 8 }).layoutWeight(1)
-        Button('刷新').fontSize(14).onClick(() => { this.refresh(); })
+        Button('刷新').fontSize(14).opacity(this.hovBtn === 'refresh' ? 0.85 : 1)
+          .onHover((h: boolean) => { this.hovBtn = h ? 'refresh' : ''; })
+          .onClick(() => { this.refresh(); })
       }
       .width('100%')
       .padding(12)
@@ -158,8 +170,12 @@ struct FileBrowserPage {
       Row() {
         TextInput({ placeholder: '新目录名', text: this.newDirName }).onChange((v: string) => { this.newDirName = v; })
           .layoutWeight(1).height(40)
-        Button('新建目录').fontSize(13).margin({ left: 8 }).onClick(() => { this.createDir(); })
-        Button('上传').fontSize(13).margin({ left: 8 }).onClick(() => { this.upload(); })
+        Button('新建目录').fontSize(13).margin({ left: 8 }).opacity(this.hovBtn === 'mkdir' ? 0.85 : 1)
+          .onHover((h: boolean) => { this.hovBtn = h ? 'mkdir' : ''; })
+          .onClick(() => { this.createDir(); })
+        Button('上传').fontSize(13).margin({ left: 8 }).opacity(this.hovBtn === 'upload' ? 0.85 : 1)
+          .onHover((h: boolean) => { this.hovBtn = h ? 'upload' : ''; })
+          .onClick(() => { this.upload(); })
       }
       .width('100%')
       .padding({ left: 12, right: 12, bottom: 12 })
@@ -170,12 +186,18 @@ struct FileBrowserPage {
             Row() {
               Text(entry.isDirectory ? '📁 ' + entry.name : '📄 ' + entry.name).fontSize(15).fontColor(Theme.fg(this.isDark())).layoutWeight(1)
               if (!entry.isDirectory) {
-                Button('下载').fontSize(12).height(30).onClick(() => { this.download(entry); })
+                Button('下载').fontSize(12).height(30).opacity(this.hovBtn === 'dl-' + entry.name ? 0.85 : 1)
+                  .onHover((h: boolean) => { this.hovBtn = h ? 'dl-' + entry.name : ''; })
+                  .onClick(() => { this.download(entry); })
               }
-              Button('删除').fontSize(12).height(30).margin({ left: 8 }).onClick(() => { this.removeEntry(entry); })
+              Button('删除').fontSize(12).height(30).margin({ left: 8 }).opacity(this.hovBtn === 'del-' + entry.name ? 0.85 : 1)
+                .onHover((h: boolean) => { this.hovBtn = h ? 'del-' + entry.name : ''; })
+                .onClick(() => { this.removeEntry(entry); })
             }
             .width('100%')
             .padding(12)
+            .backgroundColor(this.hovRow === entry.name ? Theme.cardHover(this.isDark()) : Color.Transparent)
+            .onHover((h: boolean) => { this.hovRow = h ? entry.name : ''; })
           }
           .onClick(() => {
             if (entry.isDirectory) {
@@ -189,7 +211,9 @@ struct FileBrowserPage {
       .layoutWeight(1)
 
       if (this.isSelectMode) {
-        Button('选择当前目录：' + this.currentPath).width('90%').margin({ bottom: 16 }).onClick(() => {
+        Button('选择当前目录：' + this.currentPath).width('90%').margin({ bottom: 16 }).opacity(this.hovBtn === 'select' ? 0.85 : 1)
+          .onHover((h: boolean) => { this.hovBtn = h ? 'select' : ''; })
+          .onClick(() => {
           this.selectRemoteDir();
         })
       }

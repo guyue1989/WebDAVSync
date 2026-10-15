@@ -26,6 +26,11 @@ export class NotificationService implements INotificationService {
   }
 
   async notifySyncResult(result: SyncResult): Promise<void> {
+    // A poll that lands inside a running pass is not a failure, it just means the previous
+    // pass is still working.
+    if (result.busy) {
+      return;
+    }
     if (result.status === SyncStatus.Completed) {
       if (result.message === '无变化') {
         return;

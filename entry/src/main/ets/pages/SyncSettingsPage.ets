@@ -19,21 +19,25 @@ struct SyncSettingsPage {
   @State watchEnabled: boolean = true;
   @State filterRules: string = '';
   @State concurrency: number = 2;
-  @State pollIntervalSec: number = 60;
+  @State pollIntervalSec: number = 30;
   @State showPollHelp: boolean = false;
   @State showForm: boolean = false;
   @State editingTaskId: string = '';
   @StorageProp('themeMode') themeMode: string = 'light';
+  @StorageProp('systemDark') systemDark: boolean = false;
 
   private isDark(): boolean {
-    return this.themeMode === 'dark';
+    return this.themeMode === 'dark' || (this.themeMode === 'system' && this.systemDark);
   }
+
+  @State private hovBtn: string = '';
+  @State private hovRow: string = '';
 
   async aboutToAppear(): Promise<void> {
     await ServiceContainer.init();
     const ctx = AppContext.getContext();
     if (ctx !== null) {
-      this.localDir = ctx.filesDir + '/sync';
+      this.localDir = '/storage/Users/currentUser/Documents';
     }
     await this.load();
   }
@@ -98,6 +102,12 @@ struct SyncSettingsPage {
     task.pollIntervalSec = this.pollIntervalSec;
     const res = await ServiceContainer.taskManager.save(task);
     if (res.success) {
+      // The scheduler keeps the task object it was started with, so a saved change to the
+      // poll period or the local folder only takes effect after restarting that task.
+      await ServiceContainer.syncScheduler.stopWatch(task.id);
+      await ServiceContainer.syncScheduler.stopPolling(task.id);
+      await ServiceContainer.syncScheduler.startWatch(task);
+      await ServiceContainer.syncScheduler.startPolling(task);
       this.remoteDir = '';
       this.editingTaskId = '';
       this.showForm = false;
@@ -122,14 +132,13 @@ struct SyncSettingsPage {
   resetForm(): void {
     this.editingTaskId = '';
     this.remoteDir = '';
-    const ctx = AppContext.getContext();
-    this.localDir = ctx !== null ? ctx.filesDir + '/sync' : '';
+    this.localDir = '/storage/Users/currentUser/Documents';
     this.syncDirection = SyncDirection.Bidirectional;
     this.conflictStrategy = ConflictStrategy.CreateCopy;
     this.watchEnabled = true;
     this.filterRules = '';
     this.concurrency = 2;
-    this.pollIntervalSec = 60;
+    this.pollIntervalSec = 30;
   }
 
   async runSync(task: SyncTask): Promise<void> {
@@ -158,8 +167,16 @@ struct SyncSettingsPage {
   build() {
     Column() {
       Row() {
-        Button('‹ 返回').fontSize(14).onClick(() => { router.back(); })
+        Button('‹ 返回').fontSize(14).opacity(this.hovBtn === 'back' ? 0.85 : 1)
+          .onHover((h: boolean) => { this.hovBtn = h ? 'back' : ''; })
+          .onClick(() => { router.back(); })
         Text('同步设置').fontSize(20).fontWeight(FontWeight.Bold).fontColor(Theme.fg(this.isDark())).margin({ left: 8 })
+        Blank()
+        if (this.showForm) {
+          Button(this.editingTaskId !== '' ? '保存修改' : '保存任务').fontSize(13).opacity(this.hovBtn === 'save' ? 0.85 : 1)
+            .onHover((h: boolean) => { this.hovBtn = h ? 'save' : ''; })
+            .onClick(() => { this.createTask(); })
+        }
       }
       .width('100%')
       .padding(16)
@@ -171,16 +188,26 @@ struct SyncSettingsPage {
             Column() {
               Text(this.directionLabel(task.direction) + '：' + task.localDir + ' ↔ ' + task.remoteDir).fontSize(14).fontColor(Theme.fg(this.isDark())).width('100%')
               Row() {
-                Button('编辑').fontSize(12).height(32).onClick(() => { this.startEdit(task); })
-                Button('同步').fontSize(12).height(32).margin({ left: 8 }).onClick(() => { this.runSync(task); })
-                Button('启动').fontSize(12).height(32).margin({ left: 8 }).onClick(() => { this.startTask(task); })
-                Button('删除').fontSize(12).height(32).margin({ left: 8 }).onClick(() => { this.deleteTask(task.id); })
+                Button('编辑').fontSize(12).height(32).opacity(this.hovBtn === 'edit-' + task.id ? 0.85 : 1)
+                  .onHover((h: boolean) => { this.hovBtn = h ? 'edit-' + task.id : ''; })
+                  .onClick(() => { this.startEdit(task); })
+                Button('同步').fontSize(12).height(32).margin({ left: 8 }).opacity(this.hovBtn === 'sync-' + task.id ? 0.85 : 1)
+                  .onHover((h: boolean) => { this.hovBtn = h ? 'sync-' + task.id : ''; })
+                  .onClick(() => { this.runSync(task); })
+                Button('启动').fontSize(12).height(32).margin({ left: 8 }).opacity(this.hovBtn === 'start-' + task.id ? 0.85 : 1)
+                  .onHover((h: boolean) => { this.hovBtn = h ? 'start-' + task.id : ''; })
+                  .onClick(() => { this.startTask(task); })
+                Button('删除').fontSize(12).height(32).margin({ left: 8 }).opacity(this.hovBtn === 'del-' + task.id ? 0.85 : 1)
+                  .onHover((h: boolean) => { this.hovBtn = h ? 'del-' + task.id : ''; })
+                  .onClick(() => { this.deleteTask(task.id); })
               }
               .margin({ top: 8 })
             }
             .alignItems(HorizontalAlign.Start)
             .width('100%')
             .padding(12)
+            .backgroundColor(this.hovRow === task.id ? Theme.cardHover(this.isDark()) : Color.Transparent)
+            .onHover((h: boolean) => { this.hovRow = h ? task.id : ''; })
           }
         }, (task: SyncTask) => task.id)
       }
@@ -194,7 +221,9 @@ struct SyncSettingsPage {
               .fontSize(14)
               .fontColor(this.remoteDir === '' ? Theme.sub(this.isDark()) : Theme.fg(this.isDark()))
               .layoutWeight(1)
-            Button('浏览选择').fontSize(13).onClick(() => {
+            Button('浏览选择').fontSize(13).opacity(this.hovBtn === 'browse-remote' ? 0.85 : 1)
+              .onHover((h: boolean) => { this.hovBtn = h ? 'browse-remote' : ''; })
+              .onClick(() => {
               router.pushUrl({ url: 'pages/FileBrowserPage', params: { mode: 'select' } });
             })
           }
@@ -206,7 +235,9 @@ struct SyncSettingsPage {
               .fontSize(14)
               .fontColor(this.localDir === '' ? Theme.sub(this.isDark()) : Theme.fg(this.isDark()))
               .layoutWeight(1)
-            Button('浏览选择').fontSize(13).onClick(() => {
+            Button('浏览选择').fontSize(13).opacity(this.hovBtn === 'browse-local' ? 0.85 : 1)
+              .onHover((h: boolean) => { this.hovBtn = h ? 'browse-local' : ''; })
+              .onClick(() => {
               this.selectLocalDir();
             })
           }
@@ -215,7 +246,9 @@ struct SyncSettingsPage {
           .margin({ bottom: 8 })
           Row() {
             Text('方向：' + this.directionLabel(this.syncDirection)).fontSize(14).fontColor(Theme.fg(this.isDark())).layoutWeight(1)
-            Button('切换').fontSize(12).onClick(() => {
+            Button('切换').fontSize(12).opacity(this.hovBtn === 'direction' ? 0.85 : 1)
+              .onHover((h: boolean) => { this.hovBtn = h ? 'direction' : ''; })
+              .onClick(() => {
               this.syncDirection = this.syncDirection === SyncDirection.Bidirectional ? SyncDirection.UploadOnly :
                 (this.syncDirection === SyncDirection.UploadOnly ? SyncDirection.DownloadOnly : SyncDirection.Bidirectional);
             })
@@ -224,7 +257,9 @@ struct SyncSettingsPage {
           .margin({ bottom: 8 })
           Row() {
             Text('冲突：' + this.strategyLabel(this.conflictStrategy)).fontSize(14).fontColor(Theme.fg(this.isDark())).layoutWeight(1)
-            Button('切换').fontSize(12).onClick(() => {
+            Button('切换').fontSize(12).opacity(this.hovBtn === 'conflict' ? 0.85 : 1)
+              .onHover((h: boolean) => { this.hovBtn = h ? 'conflict' : ''; })
+              .onClick(() => {
               this.conflictStrategy = this.conflictStrategy === ConflictStrategy.CreateCopy ? ConflictStrategy.KeepLocal :
                 (this.conflictStrategy === ConflictStrategy.KeepLocal ? ConflictStrategy.KeepRemote :
                   (this.conflictStrategy === ConflictStrategy.KeepRemote ? ConflictStrategy.ManualResolve : ConflictStrategy.CreateCopy));
@@ -254,10 +289,14 @@ struct SyncSettingsPage {
           .margin({ bottom: 8 })
           Row() {
             Text('并发线程数：' + this.concurrency.toString()).fontSize(14).fontColor(Theme.fg(this.isDark())).layoutWeight(1)
-            Button('-').fontSize(14).width(36).height(36).onClick(() => {
+            Button('-').fontSize(14).width(36).height(36).opacity(this.hovBtn === 'minus' ? 0.85 : 1)
+              .onHover((h: boolean) => { this.hovBtn = h ? 'minus' : ''; })
+              .onClick(() => {
               if (this.concurrency > 1) { this.concurrency -= 1; }
             })
-            Button('+').fontSize(14).width(36).height(36).margin({ left: 8 }).onClick(() => {
+            Button('+').fontSize(14).width(36).height(36).margin({ left: 8 }).opacity(this.hovBtn === 'plus' ? 0.85 : 1)
+              .onHover((h: boolean) => { this.hovBtn = h ? 'plus' : ''; })
+              .onClick(() => {
               if (this.concurrency < 10) { this.concurrency += 1; }
             })
           }
@@ -275,18 +314,22 @@ struct SyncSettingsPage {
                 .border({ width: 1, color: Theme.sub(this.isDark()), radius: 9 })
                 .margin({ left: 6 })
                 .bindPopup(this.showPollHelp, {
-                  message: '远端轮询周期：每隔多少秒主动检测一次 NAS 端变化，检测到增删改才同步。值越小发现越快，但越频繁对 NAS 请求越多、日志越多。范围 10~3600 秒。'
+                  message: '远端轮询周期：每隔多少秒主动检测一次 NAS 端变化，检测到增删改才同步。值越小发现越快，但每次轮询都要遍历本地目录并对 NAS 的每个目录发一次 PROPFIND，太频繁会很耗电。范围 30~3600 秒。'
                 })
+                .opacity(this.hovBtn === 'help' ? 0.85 : 1)
+                .onHover((h: boolean) => { this.hovBtn = h ? 'help' : ''; })
                 .onClick(() => { this.showPollHelp = !this.showPollHelp; })
               Blank()
-              Button('恢复默认').fontSize(12).onClick(() => { this.pollIntervalSec = 60; })
+              Button('恢复默认').fontSize(12).opacity(this.hovBtn === 'reset-poll' ? 0.85 : 1)
+                .onHover((h: boolean) => { this.hovBtn = h ? 'reset-poll' : ''; })
+                .onClick(() => { this.pollIntervalSec = 30; })
             }
             .width('100%')
             .margin({ bottom: 4 })
-            TextInput({ placeholder: '60', text: this.pollIntervalSec.toString() })
+            TextInput({ placeholder: '30', text: this.pollIntervalSec.toString() })
               .onChange((v: string) => {
                 const n = Number(v);
-                if (!Number.isNaN(n) && n >= 10 && n <= 3600) {
+                if (!Number.isNaN(n) && n >= 30 && n <= 3600) {
                   this.pollIntervalSec = Math.floor(n);
                 }
               })
@@ -297,7 +340,6 @@ struct SyncSettingsPage {
           .width('100%')
           .alignItems(HorizontalAlign.Start)
           .margin({ bottom: 8 })
-          Button(this.editingTaskId !== '' ? '保存修改' : '保存任务').width('100%').onClick(() => { this.createTask(); })
           }
           .width('100%')
           .padding(16)
@@ -307,7 +349,9 @@ struct SyncSettingsPage {
         .scrollBar(BarState.Auto)
       }
 
-      Button(this.showForm ? '收起' : '新增同步任务').width('90%').margin({ bottom: 16 }).onClick(() => {
+      Button(this.showForm ? '收起' : '新增同步任务').width('90%').margin({ bottom: 16 }).opacity(this.hovBtn === 'toggle-form' ? 0.85 : 1)
+        .onHover((h: boolean) => { this.hovBtn = h ? 'toggle-form' : ''; })
+        .onClick(() => {
         if (this.showForm) {
           this.showForm = false;
           this.editingTaskId = '';

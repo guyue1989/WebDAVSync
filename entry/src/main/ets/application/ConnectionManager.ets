@@ -209,6 +209,9 @@ export class ConnectionManager implements IConnectionManager {
       }
       const copied = this.copyConnection(conn);
       copied.credentialRef = refRes.data;
+      // An explicit test must try the addresses the user just typed, not the one the last
+      // background pass happened to pick.
+      this.webDavClient.invalidateAddress(copied.id);
       const res = await this.webDavClient.testConnection(copied);
       await this.secureStore.deleteCredential(refRes.data);
       return res;

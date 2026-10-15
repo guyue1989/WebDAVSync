@@ -16,6 +16,7 @@ export interface ISyncStore {
   getFileState(taskId: string, relPath: string): Promise<Result<FileState | null>>;
   listFileStates(taskId: string): Promise<Result<Map<string, FileState>>>;
   clearTaskStates(taskId: string): Promise<Result<boolean>>;
+  deleteFileState(taskId: string, relPath: string): Promise<Result<boolean>>;
   saveTransferCursor(cursor: TransferCursor): Promise<Result<boolean>>;
   getTransferCursor(transferId: string, relPath: string): Promise<Result<TransferCursor | null>>;
   deleteTransferCursor(transferId: string, relPath: string): Promise<Result<boolean>>;
@@ -151,6 +152,19 @@ export class SyncStore implements ISyncStore {
       return Result.ok(true);
     } catch (e) {
       return Result.fail(-1, '清理文件状态失败');
+    }
+  }
+
+  async deleteFileState(taskId: string, relPath: string): Promise<Result<boolean>> {
+    const store = this.ready();
+    if (store === null) {
+      return Result.fail(-1, '存储未初始化');
+    }
+    try {
+      await store.executeSql('DELETE FROM file_state WHERE task_id = ? AND rel_path = ?', [taskId, relPath]);
+      return Result.ok(true);
+    } catch (e) {
+      return Result.fail(-1, '删除文件状态失败');
     }
   }
 

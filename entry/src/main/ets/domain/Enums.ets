@@ -22,6 +22,7 @@ export enum SyncStatus {
   Transferring = 'transferring',
   Resolving = 'resolving',
   Completed = 'completed',
+  Paused = 'paused',
   Error = 'error'
 }
 

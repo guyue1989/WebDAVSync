@@ -16,24 +16,27 @@ export interface ILocalFileService {
   atomicReplace(tmpPath: string, targetPath: string): Promise<Result<boolean>>;
   removePath(path: string): Promise<Result<boolean>>;
   listDirectory(dir: string): Promise<Result<FileEntry[]>>;
-  setMTime(path: string, mtime: number): Promise<Result<boolean>>;
 
   joinPath(...parts: string[]): string;
 }
 
 export class LocalFileService implements ILocalFileService {
-  joinPath(...parts: string[]): string {
-    if (parts.length > 0 && parts[0].indexOf('://') >= 0) {
-      let result = parts[0].replace(/\/+$/, '');
-      for (let i = 1; i < parts.length; i++) {
-        const p = parts[i];
-        if (p === '' || p === '/' || p === '.') {
-          continue;
-        }
-        result = result + '/' + p.replace(/^\/+/, '');
-      }
-      return result;
+  // DocumentViewPicker returns URIs like file://docs/storage/Users/currentUser/xxx.
+  // URI parsing would drop everything after '#' in a file name, so strip the
+  // scheme+authority literally and always work with plain filesystem paths.
+  toPath(path: string): string {
+    if (!path.startsWith('file://')) {
+      return path;
     }
+    const rest = path.substring(7);
+    const slash = rest.indexOf('/');
+    if (slash < 0) {
+      return '/';
+    }
+    return rest.substring(slash);
+  }
+
+  joinPath(...parts: string[]): string {
     let result = '';
     for (let p of parts) {
       if (p === '' || p === '/' || p === '.') {
@@ -64,7 +67,7 @@ export class LocalFileService implements ILocalFileService {
 
   async exists(path: string): Promise<boolean> {
     try {
-      await fs.access(path);
+      await fs.access(this.toPath(path));
       return true;
     } catch (e) {
       return false;
@@ -73,21 +76,25 @@ export class LocalFileService implements ILocalFileService {
 
   async ensureDir(dir: string): Promise<Result<boolean>> {
     try {
-      await fs.mkdir(dir, true);
+      const p = this.toPath(dir);
+      await fs.mkdir(p, true);
       return Result.ok(true);
     } catch (e) {
       const err = e as BusinessError;
+      if (err.code === 13400004) {
+        return Result.ok(true);
+      }
       return Result.fail(err.code, err.message);
     }
   }
 
   async stat(path: string): Promise<Result<FileEntry>> {
     try {
-      const st = await fs.stat(path);
-      const name = path.substring(path.lastIndexOf('/') + 1);
+      const p = this.toPath(path);
+      const name = p.substring(p.lastIndexOf('/') + 1);
+      const st = await fs.stat(p);
       const isDir = st.isDirectory();
-      const entry = new FileEntry(name, isDir, isDir ? 0 : st.size, st.mtime, '');
-      return Result.ok(entry);
+      return Result.ok(new FileEntry(name, isDir, isDir ? 0 : st.size, st.mtime, ''));
     } catch (e) {
       const err = e as BusinessError;
       return Result.fail(err.code, err.message);
@@ -96,11 +103,11 @@ export class LocalFileService implements ILocalFileService {
 
   async listDirectory(dir: string): Promise<Result<FileEntry[]>> {
     try {
-      const names = await fs.listFile(dir);
+      const p = this.toPath(dir);
+      const names = await fs.listFile(p);
       const entries: FileEntry[] = [];
       for (const name of names) {
-        const full = this.joinPath(dir, name);
-        const st = await fs.stat(full);
+        const st = await fs.stat(this.joinPath(p, name));
         const isDir = st.isDirectory();
         entries.push(new FileEntry(name, isDir, isDir ? 0 : st.size, st.mtime, ''));
       }
@@ -111,26 +118,21 @@ export class LocalFileService implements ILocalFileService {
     }
   }
 
-  async setMTime(path: string, mtime: number): Promise<Result<boolean>> {
-    try {
-      const before = await fs.stat(path);
-      await fs.utimes(path, mtime * 1000);
-      const after = await fs.stat(path);
-      hilog.info(0x0000, 'WebDAVSync', 'setMTime input=%{public}d before.mtime=%{public}d after.mtime=%{public}d',
-        Math.floor(mtime), Math.floor(before.mtime), Math.floor(after.mtime));
-      return Result.ok(true);
-    } catch (e) {
-      const err = e as BusinessError;
-      hilog.info(0x0000, 'WebDAVSync', 'setMTime FAIL input=%{public}d err=%{public}s', Math.floor(mtime), err.message);
-      return Result.fail(err.code, err.message);
-    }
-  }
-
-
   async readSnapshot(dir: string): Promise<Result<Map<string, FileEntry>>> {
     const map = new Map<string, FileEntry>();
+    const p = this.toPath(dir);
     try {
-      await this.walk(dir, dir, map);
+      // fs.access passes even when the folder grant is gone; listing is the real test.
+      await fs.listFile(p);
+    } catch (e) {
+      const err = e as BusinessError;
+      hilog.error(0x0000, 'WebDAVSync', 'readSnapshot FAIL dir=%{public}s code=%{public}d msg=%{public}s',
+        p, err.code, err.message);
+      return Result.fail(err.code, '无法读取本地目录，请重新选择文件夹: ' + p);
+    }
+    try {
+      await this.walk(p, p, map);
+      hilog.info(0x0000, 'WebDAVSync', 'readSnapshot dir=%{public}s entries=%{public}d', p, map.size);
       return Result.ok(map);
     } catch (e) {
       const err = e as BusinessError;
@@ -143,34 +145,44 @@ export class LocalFileService implements ILocalFileService {
     try {
       names = await fs.listFile(dir);
     } catch (e) {
+      const err = e as BusinessError;
+      hilog.warn(0x0000, 'WebDAVSync', 'walk listFile FAIL dir=%{public}s code=%{public}d msg=%{public}s',
+        dir, err.code, err.message);
       return;
     }
     for (const name of names) {
       const full = this.joinPath(dir, name);
-      let st: fs.Stat;
-      try {
-        st = await fs.stat(full);
-      } catch (e) {
-        continue;
-      }
       const rel = this.relativize(base, full);
-      if (st.isDirectory()) {
-        result.set(rel, new FileEntry(name, true, 0, st.mtime, ''));
-        await this.walk(full, base, result);
-      } else {
-        result.set(rel, new FileEntry(name, false, st.size, st.mtime, ''));
+      try {
+        const st = await fs.stat(full);
+        if (st.isDirectory()) {
+          result.set(rel, new FileEntry(name, true, 0, st.mtime, ''));
+          await this.walk(full, base, result);
+        } else {
+          result.set(rel, new FileEntry(name, false, st.size, st.mtime, ''));
+        }
+      } catch (e) {
+        const err = e as BusinessError;
+        hilog.warn(0x0000, 'WebDAVSync', 'walk stat FAIL full=%{public}s code=%{public}d msg=%{public}s',
+          full, err.code, err.message);
+        continue;
       }
     }
   }
 
   async readFileRange(path: string, offset: number, length: number): Promise<Result<Uint8Array>> {
     try {
-      const file = await fs.open(path, fs.OpenMode.READ_ONLY);
-      const buf = new ArrayBuffer(length);
-      const readLen = await fs.read(file.fd, buf, { offset: offset, length: length });
-      await fs.close(file);
-      const out = new Uint8Array(buf, 0, readLen);
-      return Result.ok(out);
+      const file = await fs.open(this.toPath(path), fs.OpenMode.READ_ONLY);
+      try {
+        if (length === 0) {
+          return Result.ok(new Uint8Array(0));
+        }
+        const buf = new ArrayBuffer(length);
+        const readLen = await fs.read(file.fd, buf, { offset: offset, length: length });
+        return Result.ok(new Uint8Array(buf, 0, readLen));
+      } finally {
+        await fs.close(file);
+      }
     } catch (e) {
       const err = e as BusinessError;
       return Result.fail(err.code, err.message);
@@ -179,10 +191,15 @@ export class LocalFileService implements ILocalFileService {
 
   async writeFile(path: string, data: Uint8Array): Promise<Result<boolean>> {
     try {
-      const file = await fs.open(path, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
-      await fs.write(file.fd, data.buffer as ArrayBuffer);
-      await fs.close(file);
-      return Result.ok(true);
+      const file = await fs.open(this.toPath(path), fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.TRUNC);
+      try {
+        if (data.length > 0) {
+          await fs.write(file.fd, data.buffer as ArrayBuffer);
+        }
+        return Result.ok(true);
+      } finally {
+        await fs.close(file);
+      }
     } catch (e) {
       const err = e as BusinessError;
       return Result.fail(err.code, err.message);
@@ -191,10 +208,13 @@ export class LocalFileService implements ILocalFileService {
 
   async appendFile(path: string, data: Uint8Array): Promise<Result<boolean>> {
     try {
-      const file = await fs.open(path, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.APPEND);
-      await fs.write(file.fd, data.buffer as ArrayBuffer);
-      await fs.close(file);
-      return Result.ok(true);
+      const file = await fs.open(this.toPath(path), fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY | fs.OpenMode.APPEND);
+      try {
+        await fs.write(file.fd, data.buffer as ArrayBuffer);
+        return Result.ok(true);
+      } finally {
+        await fs.close(file);
+      }
     } catch (e) {
       const err = e as BusinessError;
       return Result.fail(err.code, err.message);
@@ -203,7 +223,7 @@ export class LocalFileService implements ILocalFileService {
 
   async atomicReplace(tmpPath: string, targetPath: string): Promise<Result<boolean>> {
     try {
-      await fs.rename(tmpPath, targetPath);
+      await fs.rename(this.toPath(tmpPath), this.toPath(targetPath));
       return Result.ok(true);
     } catch (e) {
       const err = e as BusinessError;
@@ -213,15 +233,21 @@ export class LocalFileService implements ILocalFileService {
 
   async removePath(path: string): Promise<Result<boolean>> {
     try {
-      const st = await fs.stat(path);
+      const p = this.toPath(path);
+      // A directory delete already removes everything below it, and the plan still lists the
+      // descendants separately, so "already gone" is a success rather than a failure.
+      if (!await fs.access(p)) {
+        return Result.ok(true);
+      }
+      const st = await fs.stat(p);
       if (st.isDirectory()) {
-        const names = await fs.listFile(path);
+        const names = await fs.listFile(p);
         for (const n of names) {
-          await this.removePath(this.joinPath(path, n));
+          await this.removePath(this.joinPath(p, n));
         }
-        await fs.rmdir(path);
+        await fs.rmdir(p);
       } else {
-        await fs.unlink(path);
+        await fs.unlink(p);
       }
       return Result.ok(true);
     } catch (e) {

@@ -19,10 +19,6 @@ export class FileFilter {
     }
   }
 
-  isEmpty(): boolean {
-    return this.patterns.length === 0;
-  }
-
   matches(name: string): boolean {
     for (const p of this.patterns) {
       if (this.matchOne(p, name)) {

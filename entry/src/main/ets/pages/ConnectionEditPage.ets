@@ -18,10 +18,13 @@ struct ConnectionEditPage {
   @State lanUrl: string = '';
   @State wanUrl: string = '';
   @StorageProp('themeMode') themeMode: string = 'light';
+  @StorageProp('systemDark') systemDark: boolean = false;
 
   private isDark(): boolean {
-    return this.themeMode === 'dark';
+    return this.themeMode === 'dark' || (this.themeMode === 'system' && this.systemDark);
   }
+
+  @State private hovBtn: string = '';
 
   async aboutToAppear(): Promise<void> {
     const params = router.getParams() as Record<string, string>;
@@ -100,7 +103,9 @@ struct ConnectionEditPage {
   build() {
     Column() {
       Row() {
-        Button('‹ 返回').fontSize(14).onClick(() => { router.back(); })
+        Button('‹ 返回').fontSize(14).opacity(this.hovBtn === 'back' ? 0.85 : 1)
+          .onHover((h: boolean) => { this.hovBtn = h ? 'back' : ''; })
+          .onClick(() => { router.back(); })
         Text(this.connId === '' ? '新增连接' : '编辑连接').fontSize(20).fontWeight(FontWeight.Bold).fontColor(Theme.fg(this.isDark())).margin({ left: 8 })
       }
       .width('100%')
@@ -155,10 +160,14 @@ struct ConnectionEditPage {
       .layoutWeight(1)
 
       Row() {
-        Button('测试连接').layoutWeight(1).margin({ left: 16, right: 8, bottom: 16 }).onClick(() => {
+        Button('测试连接').layoutWeight(1).margin({ left: 16, right: 8, bottom: 16 }).opacity(this.hovBtn === 'test' ? 0.85 : 1)
+          .onHover((h: boolean) => { this.hovBtn = h ? 'test' : ''; })
+          .onClick(() => {
           this.test();
         })
-        Button('保存').layoutWeight(1).margin({ left: 8, right: 16, bottom: 16 }).onClick(() => {
+        Button('保存').layoutWeight(1).margin({ left: 8, right: 16, bottom: 16 }).opacity(this.hovBtn === 'save' ? 0.85 : 1)
+          .onHover((h: boolean) => { this.hovBtn = h ? 'save' : ''; })
+          .onClick(() => {
           this.save();
         })
       }

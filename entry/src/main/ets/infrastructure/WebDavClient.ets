@@ -2,6 +2,7 @@ import http from '@ohos.net.http';
 import { util } from '@kit.ArkTS';
 import { Connection } from '../domain/Connection';
 import { FileEntry } from '../domain/FileEntry';
+import { LongNameMapper } from '../domain/LongNameMapper';
 import { Result } from '../domain/Result';
 import { ISecureStore } from './SecureStore';
 import { ILocalFileService } from './LocalFileService';
@@ -10,6 +11,13 @@ import hilog from '@ohos.hilog';
 
 const CHUNK_SIZE = 4 * 1024 * 1024;
 
+// resolveAddress runs at the start of every pass, but connections are reloaded from storage each
+// time so conn.activeUrl is always empty here: without a cache every poll pays a fresh probe,
+// which on a self-signed NAS is a doomed TLS handshake every 30 seconds and off-LAN a 5 second
+// stall. The choice is remembered instead and re-probed after this interval, or at once when a
+// pass reports that the address it used is dead.
+const RESOLVE_TTL_MS = 300000;
+
 type ProgressCallback = (transferred: number, total: number) => void;
 
 export class FileMeta {
@@ -17,9 +25,15 @@ export class FileMeta {
   mtime: number = 0;
 }
 
+class ResolvedAddress {
+  url: string = '';
+  at: number = 0;
+}
+
 export interface IWebDavClient {
   testConnection(conn: Connection): Promise<Result<boolean>>;
   resolveAddress(conn: Connection): Promise<Result<boolean>>;
+  invalidateAddress(connId: string): void;
   listDirectory(conn: Connection, relativePath: string): Promise<Result<FileEntry[]>>;
   getETag(conn: Connection, relativePath: string): Promise<Result<string>>;
   getFileMeta(conn: Connection, relativePath: string): Promise<Result<FileMeta>>;
@@ -35,6 +49,7 @@ export class WebDavClient implements IWebDavClient {
   private secureStore: ISecureStore;
   private localFileService: ILocalFileService;
   private base64: util.Base64Helper = new util.Base64Helper();
+  private resolved: Map<string, ResolvedAddress> = new Map<string, ResolvedAddress>();
 
   constructor(secureStore: ISecureStore, localFileService: ILocalFileService) {
     this.httpClient = http.createHttp();
@@ -71,15 +86,34 @@ export class WebDavClient implements IWebDavClient {
     if (conn.activeUrl !== '') {
       return Result.ok(true);
     }
+    const now = Date.now();
+    const hit = this.resolved.get(conn.id);
+    if (hit !== undefined && now - hit.at < RESOLVE_TTL_MS) {
+      conn.activeUrl = hit.url;
+      return Result.ok(true);
+    }
     if (conn.lanUrl !== '') {
       const lanOk = await this.probeUrl(conn, conn.lanUrl);
       if (lanOk) {
         conn.activeUrl = conn.lanUrl;
+        this.remember(conn.id, conn.activeUrl, now);
         return Result.ok(true);
       }
     }
     conn.activeUrl = conn.wanUrl !== '' ? conn.wanUrl : conn.baseUrl;
+    this.remember(conn.id, conn.activeUrl, now);
     return Result.ok(true);
+  }
+
+  invalidateAddress(connId: string): void {
+    this.resolved.delete(connId);
+  }
+
+  private remember(connId: string, url: string, at: number): void {
+    const entry = new ResolvedAddress();
+    entry.url = url;
+    entry.at = at;
+    this.resolved.set(connId, entry);
   }
 
   private async probeUrl(conn: Connection, url: string): Promise<boolean> {
@@ -250,9 +284,6 @@ export class WebDavClient implements IWebDavClient {
       const name = displayName !== '' ? displayName : this.basename(this.safeDecode(href));
       const size = lengthStr !== '' ? Number(lengthStr) : 0;
       const mtime = mtimeStr !== '' ? this.parseHttpDate(mtimeStr) : 0;
-      if (entries.length < 3) {
-        hilog.info(0x0000, 'WebDAVSync', 'getlastmodified raw=[%{public}s] parsed=%{public}d', mtimeStr, Math.floor(mtime));
-      }
       entries.push(new FileEntry(name, isCollection, size, mtime, etag));
     }
     return entries;
@@ -335,29 +366,45 @@ export class WebDavClient implements IWebDavClient {
     }
   }
 
+  // A half-written staging file is dead weight: every later attempt starts from offset 0, and a
+  // stray note in the vault is confusing even though the plan now ignores it.
+  private async discardPart(partPath: string): Promise<void> {
+    const statRes = await this.localFileService.stat(partPath);
+    // removePath recurses into a folder, and a staging path is only ever this download's own file,
+    // so a folder someone really named <target>.part is left alone.
+    if (statRes.success && statRes.data !== null && !statRes.data.isDirectory) {
+      await this.localFileService.removePath(partPath);
+    }
+  }
+
   async downloadFile(conn: Connection, relativePath: string, localPath: string, resumeOffset: number, onProgress: ProgressCallback): Promise<Result<boolean>> {
+    const partPath = LongNameMapper.withSuffix(localPath, '.part');
     try {
       const auth = await this.getAuth(conn);
       const url = this.buildUrl(conn, relativePath);
       const sizeRes = await this.getRemoteSize(conn, relativePath);
       if (!sizeRes.success || sizeRes.data === null) {
+        // Also clears a staging file a killed process left for a target the NAS no longer has,
+        // which would otherwise sit in the vault forever.
+        await this.discardPart(partPath);
         return Result.fail(-1, '无法获取远端文件大小');
       }
       const total = sizeRes.data;
+      const lastSlash = localPath.lastIndexOf('/');
+      if (lastSlash > 0) {
+        // Empty files used to return before this point, so their parent folder was never
+        // created and the write failed on a path that did not exist yet.
+        await this.localFileService.ensureDir(localPath.substring(0, lastSlash));
+      }
       if (total === 0) {
         const emptyRes = await this.localFileService.writeFile(localPath, new Uint8Array(0));
         if (!emptyRes.success) {
-          return Result.fail(-1, '写入空文件失败');
+          return Result.fail(-1, '写入空文件失败：' + emptyRes.errorMessage);
         }
         onProgress(0, 0);
         return Result.ok(true);
       }
       let offset = resumeOffset;
-      const partPath = localPath + '.part';
-      const lastSlash = localPath.lastIndexOf('/');
-      if (lastSlash > 0) {
-        await this.localFileService.ensureDir(localPath.substring(0, lastSlash));
-      }
       while (offset < total) {
         const end = Math.min(offset + CHUNK_SIZE - 1, total - 1);
         const resp = await this.httpClient.request(url, {
@@ -371,6 +418,7 @@ export class WebDavClient implements IWebDavClient {
           connectTimeout: 30000
         });
         if (resp.responseCode !== 206 && resp.responseCode !== 200) {
+          await this.discardPart(partPath);
           return Result.fail(resp.responseCode, '下载失败');
         }
         const data = new Uint8Array(resp.result as ArrayBuffer);
@@ -381,6 +429,7 @@ export class WebDavClient implements IWebDavClient {
           writeRes = await this.localFileService.appendFile(partPath, data);
         }
         if (!writeRes.success) {
+          await this.discardPart(partPath);
           return Result.fail(-1, '写入本地文件失败：' + writeRes.errorMessage);
         }
         offset += data.length;
@@ -388,11 +437,16 @@ export class WebDavClient implements IWebDavClient {
       }
       const finalRes = await this.localFileService.atomicReplace(partPath, localPath);
       if (!finalRes.success) {
+        await this.discardPart(partPath);
         return Result.fail(-1, '文件落盘失败');
       }
       return Result.ok(true);
     } catch (e) {
-      return Result.fail(-1, '下载异常');
+      const err = e as BusinessError;
+      hilog.error(0x0000, 'WebDAVSync', 'download EXCEPTION path=%{public}s code=%{public}d msg=%{public}s',
+        localPath, err.code, err.message);
+      await this.discardPart(partPath);
+      return Result.fail(-1, '下载异常：' + err.message);
     }
   }
 
@@ -405,6 +459,25 @@ export class WebDavClient implements IWebDavClient {
         return Result.fail(-1, '本地文件不存在');
       }
       const total = statRes.data.size;
+      if (total === 0) {
+        // The http module rejects both an empty string and a zero-length ArrayBuffer as a
+        // request body (401 Parameter error), so an empty file goes up as a PUT with no body.
+        const emptyResp = await this.httpClient.request(url, {
+          method: http.RequestMethod.PUT,
+          header: {
+            'Authorization': auth,
+            'Content-Type': 'application/octet-stream',
+            'X-OC-Mtime': Math.floor(statRes.data.mtime).toString()
+          },
+          readTimeout: 120000,
+          connectTimeout: 30000
+        });
+        if (emptyResp.responseCode >= 200 && emptyResp.responseCode < 300) {
+          onProgress(0, 0);
+          return Result.ok(true);
+        }
+        return Result.fail(emptyResp.responseCode, '上传失败 HTTP ' + emptyResp.responseCode.toString());
+      }
       const full = await this.localFileService.readFileRange(localPath, 0, total);
       if (!full.success || full.data === null) {
         return Result.fail(-1, '读取本地文件失败');
@@ -424,9 +497,12 @@ export class WebDavClient implements IWebDavClient {
         onProgress(total, total);
         return Result.ok(true);
       }
-      return Result.fail(resp.responseCode, '上传失败');
+      return Result.fail(resp.responseCode, '上传失败 HTTP ' + resp.responseCode.toString());
     } catch (e) {
-      return Result.fail(-1, '上传异常');
+      const err = e as BusinessError;
+      hilog.error(0x0000, 'WebDAVSync', 'upload EXCEPTION path=%{public}s code=%{public}d msg=%{public}s',
+        relativePath, err.code, err.message);
+      return Result.fail(-1, '上传异常：' + err.message);
     }
   }
 

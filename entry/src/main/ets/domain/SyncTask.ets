@@ -9,8 +9,8 @@ export class SyncTask {
   direction: SyncDirection = SyncDirection.Bidirectional;
   conflictStrategy: ConflictStrategy = ConflictStrategy.CreateCopy;
   watchEnabled: boolean = true;
-  debounceMs: number = 1000;
-  pollIntervalSec: number = 60;
+  debounceMs: number = 500;
+  pollIntervalSec: number = 30;
   filterRules: string = '';
   concurrency: number = 2;
 }
